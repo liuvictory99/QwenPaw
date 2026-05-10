@@ -90,6 +90,9 @@ def _mask_api_key(api_key: str) -> str:
 def _is_configured(provider: Provider) -> bool:
     if provider.is_local:
         return True
+    has_credentials = getattr(provider, "has_credentials", None)
+    if callable(has_credentials):
+        return bool(provider.base_url and has_credentials())
     # for API-based providers, we consider them
     # configured if they have a base URL and (if required) an API key
     if not provider.base_url:
@@ -556,6 +559,153 @@ def config_key_cmd(provider_id: str | None) -> None:
 def set_llm_cmd() -> None:
     """Interactively set the active LLM model."""
     configure_llm_slot_interactive()
+
+
+@models_group.group("auth")
+def auth_models_group() -> None:
+    """Manage model-provider authentication."""
+
+
+@auth_models_group.command("login")
+@click.argument("provider_id")
+@click.option(
+    "--method",
+    "method",
+    type=click.Choice(["browser", "device-code"]),
+    default="browser",
+    show_default=True,
+    help="OpenAI Codex login method.",
+)
+@click.option(
+    "--client-id",
+    default=None,
+    help=(
+        "QwenPaw-owned OpenAI OAuth client id. Defaults to "
+        "QWENPAW_OPENAI_CODEX_CLIENT_ID."
+    ),
+)
+def auth_login_cmd(
+    provider_id: str,
+    method: str,
+    client_id: str | None,
+) -> None:
+    """Log in to a provider that supports OAuth."""
+    if provider_id != "openai-codex":
+        raise click.ClickException(
+            f"Provider '{provider_id}' does not support OAuth login.",
+        )
+
+    from qwenpaw.providers.openai_codex_auth import (
+        build_browser_oauth_url,
+        exchange_browser_oauth_code,
+        extract_authorization_code,
+        login_with_device_code,
+        receive_browser_oauth_redirect,
+        save_codex_credentials,
+    )
+
+    async def _login_device_code():
+        async def _on_verification(url: str, code: str) -> None:
+            click.echo("OpenAI Codex device-code login")
+            click.echo(f"URL: {url}")
+            click.echo(f"Code: {code}")
+            click.echo("Never share this code.")
+            try:
+                click.launch(url)
+            except click.ClickException:
+                pass
+
+        return await login_with_device_code(
+            client_id=client_id,
+            on_verification=_on_verification,
+        )
+
+    async def _login_browser():
+        url, verifier, state = build_browser_oauth_url(client_id=client_id)
+        click.echo("Opening browser for OpenAI Codex OAuth login...")
+        click.echo(f"URL: {url}")
+        loop = asyncio.get_running_loop()
+        callback_ready = asyncio.Event()
+        callback_task = asyncio.create_task(
+            asyncio.to_thread(
+                receive_browser_oauth_redirect,
+                expected_state=state,
+                timeout_seconds=20,
+                on_ready=lambda _: loop.call_soon_threadsafe(
+                    callback_ready.set,
+                ),
+            ),
+        )
+        callback_available = True
+        try:
+            while not callback_ready.is_set():
+                if callback_task.done():
+                    await callback_task
+                await asyncio.sleep(0.01)
+        except Exception:
+            callback_available = False
+        try:
+            click.launch(url)
+        except click.ClickException:
+            pass
+        if callback_available:
+            try:
+                code = await callback_task
+            except Exception:
+                callback_available = False
+        if not callback_available:
+            pasted = click.prompt(
+                "Paste the full redirect URL",
+                hide_input=True,
+            )
+            code = extract_authorization_code(pasted, expected_state=state)
+        return await exchange_browser_oauth_code(
+            code=code,
+            code_verifier=verifier,
+            client_id=client_id,
+        )
+
+    creds = asyncio.run(
+        _login_device_code() if method == "device-code" else _login_browser(),
+    )
+    save_codex_credentials(creds)
+    click.echo("✓ OpenAI Codex login saved for QwenPaw.")
+
+
+@auth_models_group.command("status")
+@click.argument("provider_id")
+def auth_status_cmd(provider_id: str) -> None:
+    """Show local OAuth status for a provider."""
+    if provider_id != "openai-codex":
+        raise click.ClickException(
+            f"Provider '{provider_id}' does not support OAuth status.",
+        )
+    from qwenpaw.providers.openai_codex_auth import load_codex_credentials
+
+    creds = load_codex_credentials()
+    if creds is None:
+        click.echo("OpenAI Codex: not logged in")
+        return
+    email = f" ({creds.email})" if creds.email else ""
+    click.echo(f"OpenAI Codex: logged in{email}")
+
+
+@auth_models_group.command("logout")
+@click.argument("provider_id")
+def auth_logout_cmd(provider_id: str) -> None:
+    """Remove local OAuth credentials for a provider."""
+    if provider_id != "openai-codex":
+        raise click.ClickException(
+            f"Provider '{provider_id}' does not support OAuth logout.",
+        )
+    from qwenpaw.providers.openai_codex_auth import clear_codex_credentials
+
+    removed = clear_codex_credentials()
+    click.echo(
+        "✓ OpenAI Codex credentials removed."
+        if removed
+        else "OpenAI Codex: no local credentials found.",
+    )
 
 
 @models_group.command("add-provider")

@@ -22,6 +22,7 @@ from ..exceptions import ProviderError
 from .anthropic_provider import AnthropicProvider
 from .gemini_provider import GeminiProvider
 from .ollama_provider import OllamaProvider
+from .openai_codex_provider import OpenAICodexProvider
 from .openai_provider import OpenAIProvider
 from .lmstudio_provider import LMStudioProvider
 from .provider import (
@@ -808,6 +809,8 @@ PROVIDER_OPENAI = OpenAIProvider(
     freeze_url=True,
 )
 
+PROVIDER_OPENAI_CODEX = OpenAICodexProvider()
+
 PROVIDER_OPENCODE = OpenAIProvider(
     id="opencode",
     name="OpenCode",
@@ -1015,6 +1018,7 @@ class ProviderManager:  # pylint: disable=too-many-public-methods
         self._add_builtin(PROVIDER_ALIYUN_TOKENPLAN)
         self._add_builtin(PROVIDER_OPENCODE)
         self._add_builtin(PROVIDER_OPENAI)
+        self._add_builtin(PROVIDER_OPENAI_CODEX)
         self._add_builtin(PROVIDER_AZURE_OPENAI)
         self._add_builtin(PROVIDER_ANTHROPIC)
         self._add_builtin(PROVIDER_GEMINI)
@@ -1576,6 +1580,8 @@ class ProviderManager:  # pylint: disable=too-many-public-methods
 
         if provider_id == "openrouter":
             return OpenRouterProvider.model_validate(data)
+        if provider_id == "openai-codex":
+            return OpenAICodexProvider.model_validate(data)
         if provider_id == "anthropic" or chat_model == "AnthropicChatModel":
             return AnthropicProvider.model_validate(data)
         if provider_id == "gemini" or chat_model == "GeminiChatModel":
